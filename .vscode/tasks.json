@@ -12,7 +12,8 @@
                 "-o",
                 "${fileBasenameNoExtension}.exe",
                 "-Wall",
-                "-std=c++11"
+                "-std=c++11",
+                "-Wl, -stack=1048576"
             ],
             "group": "build",
             "presentation": {

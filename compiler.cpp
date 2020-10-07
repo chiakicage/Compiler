@@ -1,3 +1,5 @@
+#define NDEBUG
+
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -6,9 +8,16 @@
 #include <algorithm>
 #include <vector>
 #include <string>
-#include <map>
+#include <unordered_map>
 #include <set>
 
+namespace Reader {
+    std::vector<int> numbers;
+    int pos;
+    inline int read() {
+        return numbers[pos++];
+    }
+}
 enum char_type { 
     EMPTY,
     ALPHA,
@@ -142,14 +151,25 @@ struct Object {
     std::string name;
     std::vector<int> dims;
     int value;
-    int* address;
-    Object(obj_type type):type(type), value(0), address(nullptr) {}
-    Object(obj_type type, int val):type(type), value(val), address(nullptr) {}
-    Object(obj_type type, const std::string& name):type(type), name(name), value(0), address(nullptr) {}
-
-    ~Object() {
-        delete address;
+    std::vector<int> address;
+    Object(obj_type type):type(type), value(0) {
+        // std::cerr << "done1\n";
+        address.clear();
+        name.clear();
+        dims.clear();
     }
+    Object(obj_type type, int val):type(type), value(val) {
+        // std::cerr << "done2\n";
+        address.clear();
+        name.clear();
+        dims.clear();
+    }
+    Object(obj_type type, const std::string& name):type(type), name(name), value(0) {
+        // std::cerr << "done3\n";
+        address.clear();
+        dims.clear();
+    }
+
 
     void setArray(const std::vector<int>& def) {
         assert(type == ARRAY);
@@ -157,24 +177,24 @@ struct Object {
         for (auto it = def.rbegin(); it != def.rend(); ++it) {
             dims.push_back(size);
             size *= *it;
-            std::cout << size << "\n";
         }
         std::reverse(dims.begin(), dims.end());
-        address = new int[size];
+        address.resize(size);
     }
 
     int& getArray(const std::vector<int> ind) {
         assert(type == ARRAY);
-        int* ret = address;
+        int ret = 0;
         for (size_t i = 0; i < ind.size(); i++) {
             ret = ret + dims[i] * ind[i];
         }
-        return *ret;
+        return address[ret];
     }
 };
 
 struct Tree {
     stmt_type type;
+    std::string name;
     std::vector<Tree*> children;
     std::vector<Object> vars;
     std::vector<std::string> ops;
@@ -183,7 +203,8 @@ struct Tree {
     }
 };
 
-std::map<std::string, Tree*> func_table;
+std::unordered_map<std::string, Tree*> func_table;
+Tree* Root;
 
 
 namespace Parser {
@@ -210,7 +231,7 @@ namespace Parser {
     Tree* Unit9();
 
     inline void match(const std::string& str) {
-        std::cerr << "Match " + str << std::endl;
+        // std::cerr << "Match " + str << std::endl;
         std::string tmp;
         if ((tmp = Lexer::getLexeme()) != str)
             throw "Match " + str + " Failed! " + tmp;
@@ -256,6 +277,7 @@ namespace Parser {
 
     Tree* Funcdef(const std::string& name) {
         Tree* ret = new Tree(FUNCDEF);
+        ret->name = name;
         func_table[name] = ret;
         match("(");
         if (Lexer::nxtLexeme() != ")") {
@@ -457,11 +479,10 @@ namespace Parser {
     Tree* Unit1() {
         Tree* ret = new Tree(UNIT1);
         std::string s;
-        if ((s = Lexer::nxtLexeme()) == "+" || s == "-" || s == "!") {
+        while ((s = Lexer::nxtLexeme()) == "+" || s == "-" || s == "!") {
             if (s == "+") match("+");
             else if (s == "-") match("-");
             else match("!");
-
             ret->ops.push_back(s);
         }
         ret->children.push_back(Unit0());
@@ -588,16 +609,21 @@ namespace Runner {
     Object Unit8(Tree*);
     Object Unit9(Tree*);
 
-    std::map<std::string, std::vector<Object> > var_table;
+    std::unordered_map<std::string, std::vector<Object> > var_table;
 
     bool return_tag;
+    std::string func_tag;
 
     int Function(Tree* cur, const std::vector<int>& params) {
+        // std::cerr << "in func " + cur->name << "\n";
+        // for (auto x : params) 
+            // std::cerr << x << " ";
+        // std::cerr << "\n";
         if (cur == nullptr) {
             putchar(char(params.front()));
             return 0;
         }
-
+        func_tag = cur->name;
         assert(params.size() == cur->vars.size());
         for (size_t i = 0; i < params.size(); i++) {
             var_table[cur->vars[i].name].emplace_back(VARIABLE, params[i]);
@@ -616,6 +642,7 @@ namespace Runner {
     
 
     int Statements(Tree* cur) {
+        // std::cerr << "in stmts\n";
         std::vector<std::string> new_vars;
         int ret = 0;
         for (auto chd : cur->children) {
@@ -624,7 +651,13 @@ namespace Runner {
                 case VARDEF:
                     for (auto obj : chd->vars) {
                         new_vars.push_back(obj.name);
+                        // auto &v = var_table[obj.name];
+                        // std::cerr << v.size() << " 234\n";
+                        // v.push_back(Object(VALUE, 1));
+                        // std::cerr << v.size() << " 345\n";
+                        // v.pop_back();
                         var_table[obj.name].emplace_back(obj.type);
+                        // std::cerr << var_table[obj.name].size() << "\n";
                         if (obj.type == ARRAY) {
                             auto &u = var_table[obj.name].back();
                             u.setArray(obj.dims);
@@ -632,6 +665,7 @@ namespace Runner {
                     }
                     break;
                 case IF:
+                case IF_ELSE:
                     tmp = If(chd);
                     break;
                 case FOR:
@@ -651,6 +685,7 @@ namespace Runner {
                     Expression(chd);
                     break;
                 default:
+                    // std::cerr << chd->type << "\n";
                     assert(0);
             }
             if (return_tag) {
@@ -665,6 +700,7 @@ namespace Runner {
     }
 
     int Statement(Tree* cur) {
+        // std::cerr << "in stmt\n";
         std::vector<std::string> new_vars;
         int ret = 0;
         for (auto chd : cur->children) {
@@ -714,6 +750,7 @@ namespace Runner {
     }
 
     int If(Tree* cur) {
+        // std::cerr << "in if\n";
         int ret = 0;
         if (Expression(cur->children[0])) {
             ret = Statement(cur->children[1]);
@@ -725,6 +762,7 @@ namespace Runner {
     }
 
     int For(Tree* cur) {
+        // std::cerr << "in for\n";
         int ret = 0;
         std::vector<std::string> new_vars;
         if (cur->children[0] != nullptr) {
@@ -758,6 +796,7 @@ namespace Runner {
     }
 
     int While(Tree* cur) {
+        // std::cerr << "in while\n";
         int ret = 0;
         while (Expression(cur->children[0])) {
             int tmp = Statement(cur->children[1]);
@@ -770,6 +809,7 @@ namespace Runner {
     }
 
     int Return(Tree* cur) {
+        // std::cerr << "in return\n";
         int ret = Expression(cur->children[0]);
         assert(return_tag == false);
         return_tag = true;
@@ -792,10 +832,12 @@ namespace Runner {
 
 
     int Expression(Tree* cur) {
+        // std::cerr << "in Expr\n";
         Object obj = Unit9(cur->children[0]);
+        // std::cerr << "expr done\n";
         if (obj.type == CIN) {
             for (size_t i = 1; i < cur->children.size(); i++) {
-                std::cin >> getVar(Unit9(cur->children[i]));
+                getVar(Unit9(cur->children[i])) = Reader::read();
             }
             return 0;
         } else if (obj.type == COUT) {
@@ -820,6 +862,7 @@ namespace Runner {
     }
 
     Object Unit0(Tree* cur) {
+        // std::cerr << "in 0\n";
         Object ret = cur->vars.front();
         if (ret.type == CIN || ret.type == COUT || ret.type == ENDL) {
             return ret;
@@ -842,20 +885,25 @@ namespace Runner {
             return ret;
         } else {
             assert(0);
+            return ret;
         }
     }
 
     Object Unit1(Tree* cur) {
+        // std::cerr << "in 1\n";
         Object ret = Unit0(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
-            if (cur->ops[0] == "-") ret.value = -ret.value;
-            else if (cur->ops[0] == "!") ret.value = !ret.value;
+            for (auto it = cur->ops.rbegin(); it != cur->ops.rend(); ++it) {
+                if (*it == "-") ret.value = -ret.value;
+                else if (*it == "!") ret.value = !ret.value;
+            }
         }
         return ret;
     }
 
     Object Unit2(Tree* cur) {
+        // std::cerr << "in 2\n";
         Object ret = Unit1(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
@@ -873,6 +921,7 @@ namespace Runner {
     }
 
     Object Unit3(Tree* cur) {
+        // std::cerr << "in 3\n";
         Object ret = Unit2(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
@@ -888,18 +937,19 @@ namespace Runner {
     }
 
     Object Unit4(Tree* cur) {
+        // std::cerr << "in 4\n";
         Object ret = Unit3(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
             for (size_t i = 0; i < cur->ops.size(); i++) {
                 if (cur->ops[i] == "<") {
-                    ret.value = ret.value < getVal(Unit3(cur->children[i + 1]));
+                    ret.value = (ret.value < getVal(Unit3(cur->children[i + 1])));
                 } else if (cur->ops[i] == "<=") {
-                    ret.value = ret.value <= getVal(Unit3(cur->children[i + 1]));
+                    ret.value = (ret.value <= getVal(Unit3(cur->children[i + 1])));
                 } else if (cur->ops[i] == ">") {
-                    ret.value = ret.value > getVal(Unit3(cur->children[i + 1]));
+                    ret.value = (ret.value > getVal(Unit3(cur->children[i + 1])));
                 } else if (cur->ops[i] == ">=") {
-                    ret.value = ret.value >= getVal(Unit3(cur->children[i + 1]));
+                    ret.value = (ret.value >= getVal(Unit3(cur->children[i + 1])));
                 }
             }
         }
@@ -907,14 +957,15 @@ namespace Runner {
     }
 
     Object Unit5(Tree* cur) {
+        // std::cerr << "in 5\n";
         Object ret = Unit4(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
             for (size_t i = 0; i < cur->ops.size(); i++) {
                 if (cur->ops[i] == "==") {
-                    ret.value = ret.value == getVal(Unit4(cur->children[i + 1]));
+                    ret.value = (ret.value == getVal(Unit4(cur->children[i + 1])));
                 } else if (cur->ops[i] == "!=") {
-                    ret.value = ret.value != getVal(Unit4(cur->children[i + 1]));
+                    ret.value = (ret.value != getVal(Unit4(cur->children[i + 1])));
                 } 
             }
         }
@@ -922,58 +973,92 @@ namespace Runner {
     }
 
     Object Unit6(Tree* cur) {
+        // std::cerr << "in 6\n";
         Object ret = Unit5(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
             for (size_t i = 0; i < cur->ops.size(); i++) {
-                ret.value = ret.value ^ getVal(Unit5(cur->children[i + 1]));
+                ret.value = (ret.value ^ getVal(Unit5(cur->children[i + 1])));
             }
         }
         return ret;
     }
 
     Object Unit7(Tree* cur) {
+        // std::cerr << "in 7\n";
         Object ret = Unit6(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
             for (size_t i = 0; i < cur->ops.size(); i++) {
-                ret.value = ret.value && getVal(Unit6(cur->children[i + 1]));
+                ret.value = (ret.value && getVal(Unit6(cur->children[i + 1])));
             }
         }
         return ret;
     }
 
     Object Unit8(Tree* cur) {
+        // std::cerr << "in 8\n";
         Object ret = Unit7(cur->children[0]);
         if (!cur->ops.empty()) {
             ret = Object(VALUE, getVal(ret));
             for (size_t i = 0; i < cur->ops.size(); i++) {
-                ret.value = ret.value || getVal(Unit7(cur->children[i + 1]));
+                ret.value = (ret.value || getVal(Unit7(cur->children[i + 1])));
             }
         }
         return ret;
     }
 
     Object Unit9(Tree* cur) {
+        // std::cerr << "in 9\n";
         std::vector<Object> rets;
         for (size_t i = 0; i < cur->children.size(); i++) {
             rets.push_back(Unit8(cur->children[i]));
         }
         if (!cur->ops.empty()) {
-            assert(rets.back().type == VALUE);
             for (size_t i = 0; i + 1 < cur->children.size(); i++) {
-                getVar(rets[i]) = rets.back().value;
+                getVar(rets[i]) = getVal(rets.back());
             }
         }
+        // std::cerr << "done\n";
+        // std::cerr << rets[0].name << "\n";
         return rets[0];
+    }
+
+    void Main() {
+        for (auto chd : Root->children) {
+            if (chd->type == VARDEF) {
+                for (auto obj : chd->vars) {
+                    var_table[obj.name].emplace_back(obj.type);
+                    if (obj.type == ARRAY) {
+                        auto& u = var_table[obj.name].back();
+                        u.setArray(obj.dims);
+                    }
+                }
+            }
+        }
+        Runner::Function(func_table["main"], std::vector<int>());
     }
 }
 
 int main() {
 #ifdef ARK
-    freopen("test.cpp", "r", stdin);
+    freopen("test.in", "r", stdin);
     freopen("error.out", "w", stderr);
 #endif
+    int n;
+    std::cin >> n;
+    for (int i = 1, j; i <= n; i++) {
+        std::cin >> j;
+        Reader::numbers.push_back(j);
+    }
+    try {
+        Root = Parser::Program();
+    } catch(std::string s) {
+        std::cerr << s << std::endl;
+    }
+    // std::cerr << "parser done.\n";
+    Runner::Main();
+    // std::cerr << "runner done.\n";
     // for (int i = 1; i <= 20; ++i)
         // std::cout << Lexer::getLexeme().empty() << std::endl;
 }
